@@ -8,7 +8,7 @@ import asyncio
 import json
 import os
 import traceback
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import asynccontextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta
 from io import StringIO
 from typing import Any, Dict, List
@@ -16,9 +16,7 @@ from typing import Any, Dict, List
 import boto3
 import pulumi
 import pulumi_aws as aws
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
+from fastmcp import FastMCP
 from pulumi import automation as auto
 
 from helpers import AWSHelpers, CostUtils, MonitoringUtils
@@ -154,7 +152,7 @@ Environment Variables:
     return parser.parse_args()
 
 
-class AWSDevOpsMCPServer:
+class AWSDevOpsMCPServer(FastMCP):
     """MCP Server for AWS DevOps operations"""
 
     def __init__(self, config=None):
@@ -213,429 +211,69 @@ class AWSDevOpsMCPServer:
                 # Continue without failing, but warn user
                 print(f"⚠️ Warning: {error_msg}")
 
-        # Initialize server components
-        self.server = Server("aws-devops-mcp")
+        # Define the lifespan context manager for startup events
+        @asynccontextmanager
+        async def lifespan(app: FastMCP):
+            # This is the startup logic
+            await self._setup_tools()
+            yield
+            # No shutdown logic needed for now
+
+        # Initialize FastMCP server with the lifespan manager
+        super().__init__(lifespan=lifespan)
+        self.title = "AWS DevOps MCP Server"
+        self.description = self.__doc__
         self.storage = FunctionStorage(self.config.database_path, max_functions=self.config.max_functions)
         self.aws_helpers = AWSHelpers(session=self.aws_session)
         self.cost_utils = CostUtils()
         self.monitoring_utils = MonitoringUtils()
-        self._setup_tools()
 
-    def _setup_tools(self):
+    async def _setup_tools(self):
         """Setup MCP tools based on configuration"""
+        # Register tools using FastMCP decorators
+        if self.config.enable_boto3_execution:
+            self.tool("boto3_execute")(self._boto3_execute)
+        
+        if self.config.enable_pulumi:
+            self.tool("pulumi_preview")(self._pulumi_preview)
+            self.tool("pulumi_up")(self._pulumi_up)
+        
+        if self.config.enable_function_storage:
+            self.tool("save_function")(self._save_function)
+            self.tool("list_functions")(self._list_functions)
+            self.tool("delete_function")(self._delete_function)
+            self.tool("execute_with_functions")(self._execute_with_functions)
 
-        @self.server.list_tools()
-        async def handle_list_tools() -> List[Tool]:
-            tools = []
 
-            # Always include boto3_execute if enabled
-            if self.config.enable_boto3_execution:
-                tools.append(
-                    Tool(
-                        name="boto3_execute",
-                        description="Execute arbitrary boto3 Python code",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "code": {"type": "string", "description": "Python code using boto3"},
-                                "context": {
-                                    "type": "string",
-                                    "enum": ["general", "finops", "devops", "security"],
-                                    "description": "Execution context for smart " "imports",
-                                    "default": "general",
-                                },
-                            },
-                            "required": ["code"],
-                        },
-                    )
-                )
 
-            # Include Pulumi tools if enabled
-            if self.config.enable_pulumi:
-                tools.extend(
-                    [
-                        Tool(
-                            name="pulumi_preview",
-                            description="Preview Pulumi infrastructure changes",
-                            inputSchema={
-                                "type": "object",
-                                "properties": {
-                                    "code": {"type": "string", "description": "Pulumi Python code"},
-                                    "stack_name": {"type": "string", "description": "Name of the Pulumi stack"},
-                                    "project_name": {
-                                        "type": "string",
-                                        "description": "Name of the Pulumi project",
-                                        "default": "mcp-project",
-                                    },
-                                },
-                                "required": ["code", "stack_name"],
-                            },
-                        ),
-                        Tool(
-                            name="pulumi_up",
-                            description="Deploy Pulumi infrastructure",
-                            inputSchema={
-                                "type": "object",
-                                "properties": {
-                                    "code": {"type": "string", "description": "Pulumi Python code"},
-                                    "stack_name": {"type": "string", "description": "Name of the Pulumi stack"},
-                                    "project_name": {
-                                        "type": "string",
-                                        "description": "Name of the Pulumi project",
-                                        "default": "mcp-project",
-                                    },
-                                },
-                                "required": ["code", "stack_name"],
-                            },
-                        ),
-                    ]
-                )
-
-            # Include function management tools if enabled
-            if self.config.enable_function_storage:
-                tools.extend(
-                    [
-                        Tool(
-                            name="save_function",
-                            description="Save a reusable Python function",
-                            inputSchema={
-                                "type": "object",
-                                "properties": {
-                                    "name": {"type": "string", "description": "Function name"},
-                                    "code": {"type": "string", "description": "Function Python code"},
-                                    "description": {
-                                        "type": "string",
-                                        "description": "Function description",
-                                        "default": "",
-                                    },
-                                    "tags": {
-                                        "type": "array",
-                                        "items": {"type": "string"},
-                                        "description": "Function tags",
-                                        "default": [],
-                                    },
-                                    "category": {
-                                        "type": "string",
-                                        "description": "Function category",
-                                        "default": "general",
-                                    },
-                                },
-                                "required": ["name", "code"],
-                            },
-                        ),
-                        Tool(
-                            name="list_functions",
-                            description="List saved functions with optional " "filtering",
-                            inputSchema={
-                                "type": "object",
-                                "properties": {
-                                    "category": {"type": "string", "description": "Filter by category"},
-                                    "tags": {
-                                        "type": "array",
-                                        "items": {"type": "string"},
-                                        "description": "Filter by tags",
-                                    },
-                                },
-                            },
-                        ),
-                        Tool(
-                            name="delete_function",
-                            description="Delete a saved function",
-                            inputSchema={
-                                "type": "object",
-                                "properties": {"name": {"type": "string", "description": "Function name to delete"}},
-                                "required": ["name"],
-                            },
-                        ),
-                        Tool(
-                            name="execute_with_functions",
-                            description="Execute Python code with access to " "saved functions",
-                            inputSchema={
-                                "type": "object",
-                                "properties": {
-                                    "code": {
-                                        "type": "string",
-                                        "description": "Python code that can use " "saved functions",
-                                    },
-                                    "context": {
-                                        "type": "string",
-                                        "enum": ["general", "finops", "devops", "security"],
-                                        "description": "Execution context",
-                                        "default": "general",
-                                    },
-                                },
-                                "required": ["code"],
-                            },
-                        ),
-                    ]
-                )
-
-            return tools
-
-        @self.server.call_tool()
-        async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
-            try:
-                if name == "boto3_execute" and self.config.enable_boto3_execution:
-                    result = await self._boto3_execute(arguments["code"], arguments.get("context", "general"))
-                elif name == "pulumi_preview" and self.config.enable_pulumi:
-                    result = await self._pulumi_preview(
-                        arguments["code"], arguments["stack_name"], arguments.get("project_name", "mcp-project")
-                    )
-                elif name == "pulumi_up" and self.config.enable_pulumi:
-                    result = await self._pulumi_up(
-                        arguments["code"], arguments["stack_name"], arguments.get("project_name", "mcp-project")
-                    )
-                elif name == "save_function" and self.config.enable_function_storage:
-                    result = self.storage.save_function(
-                        arguments["name"],
-                        arguments["code"],
-                        arguments.get("description", ""),
-                        arguments.get("tags", []),
-                        arguments.get("category", "general"),
-                    )
-                elif name == "list_functions" and self.config.enable_function_storage:
-                    result = self.storage.list_functions(arguments.get("category"), arguments.get("tags"))
-                elif name == "delete_function" and self.config.enable_function_storage:
-                    result = self.storage.delete_function(arguments["name"])
-                elif name == "execute_with_functions" and self.config.enable_function_storage:
-                    result = await self._execute_with_functions(arguments["code"], arguments.get("context", "general"))
-                else:
-                    result = {"error": f"Tool '{name}' is not available or disabled"}
-
-                return [TextContent(type="text", text=json.dumps(result, indent=2))]
-
-            except Exception as e:
-                error_result = {"error": str(e), "error_type": type(e).__name__, "traceback": traceback.format_exc()}
-                return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
-
-    async def _boto3_execute(self, code: str, context: str = "general") -> Dict[str, Any]:
-        """Execute boto3 code with timeout"""
-        # Build execution namespace based on context
-        namespace = {
-            "boto3": boto3,
-            "json": json,
-            "datetime": datetime,
-            "timedelta": timedelta,
-            "session": self.aws_session,  # Use configured session
-            "aws": self.aws_helpers,
-            "cost": self.cost_utils,
-            "monitoring": self.monitoring_utils,
-        }
-
-        # Add context-specific imports
-        if context == "finops":
-            try:
-                import numpy as np
-                import pandas as pd
-
-                namespace.update({"pd": pd, "np": np})
-            except ImportError:
-                pass  # Optional dependencies
-
-        try:
-            # Use asyncio.wait_for for timeout
-            output_capture = StringIO()
-            error_capture = StringIO()
-
-            with redirect_stdout(output_capture), redirect_stderr(error_capture):
-                # Execute with timeout
-                await asyncio.wait_for(
-                    asyncio.get_event_loop().run_in_executor(None, lambda: exec(code, namespace)),
-                    timeout=self.config.execution_timeout,
-                )
-
-            output = output_capture.getvalue()
-            errors = error_capture.getvalue()
-
-            return {"success": True, "output": output, "errors": errors if errors else None, "context": context}
-
-        except asyncio.TimeoutError:
-            return {
-                "success": False,
-                "error": f"Code execution timed out after " f"{self.config.execution_timeout} seconds",
-                "error_type": "TimeoutError",
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "traceback": traceback.format_exc(),
-            }
-
-    async def _pulumi_preview(self, code: str, stack_name: str, project_name: str) -> Dict[str, Any]:
-        """Preview Pulumi infrastructure changes"""
-        try:
-
-            def program():
-                exec(code, {"pulumi": pulumi, "aws": aws, "pulumi_aws": aws})
-
-            # Create or select stack
-            stack = auto.create_or_select_stack(stack_name=stack_name, project_name=project_name, program=program)
-
-            # Run preview with timeout
-            preview_result = await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(None, lambda: stack.preview()),
-                timeout=self.config.execution_timeout,
-            )
-
-            return {
-                "success": True,
-                "stack_name": stack_name,
-                "project_name": project_name,
-                "changes": preview_result.change_summary,
-                "code_executed": code,
-            }
-
-        except asyncio.TimeoutError:
-            return {
-                "success": False,
-                "error": f"Pulumi preview timed out after " f"{self.config.execution_timeout} seconds",
-                "error_type": "TimeoutError",
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "traceback": traceback.format_exc(),
-            }
-
-    async def _pulumi_up(self, code: str, stack_name: str, project_name: str) -> Dict[str, Any]:
-        """Deploy Pulumi infrastructure"""
-        try:
-
-            def program():
-                exec(code, {"pulumi": pulumi, "aws": aws, "pulumi_aws": aws})
-
-            # Create or select stack
-            stack = auto.create_or_select_stack(stack_name=stack_name, project_name=project_name, program=program)
-
-            # Run deployment with timeout
-            up_result = await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(None, lambda: stack.up()),
-                timeout=self.config.execution_timeout,
-            )
-
-            return {
-                "success": True,
-                "stack_name": stack_name,
-                "project_name": project_name,
-                "outputs": up_result.outputs,
-                "summary": up_result.summary,
-                "code_executed": code,
-            }
-
-        except asyncio.TimeoutError:
-            return {
-                "success": False,
-                "error": f"Pulumi deployment timed out after " f"{self.config.execution_timeout} seconds",
-                "error_type": "TimeoutError",
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "traceback": traceback.format_exc(),
-            }
-
-    async def _execute_with_functions(self, code: str, context: str = "general") -> Dict[str, Any]:
-        """Execute code with saved functions available"""
-
-        # Get all saved functions
-        saved_functions = self.storage.get_all_functions_code()
-
-        # Build namespace with saved functions
-        namespace = {
-            "boto3": boto3,
-            "json": json,
-            "datetime": datetime,
-            "timedelta": timedelta,
-            "session": self.aws_session,  # Use configured session
-            "aws": self.aws_helpers,
-            "cost": self.cost_utils,
-            "monitoring": self.monitoring_utils,
-        }
-
-        # Add saved functions to namespace
-        for func_name, func_code in saved_functions.items():
-            try:
-                exec(func_code, namespace)
-                self.storage.update_usage(func_name)
-            except Exception as e:
-                if self.config.debug:
-                    print(f"Warning: Could not load function " f"{func_name}: {e}")
-
-        # Add context-specific imports
-        if context == "finops":
-            try:
-                import numpy as np
-                import pandas as pd
-
-                namespace.update({"pd": pd, "np": np})
-            except ImportError:
-                pass
-
-        try:
-            output_capture = StringIO()
-            error_capture = StringIO()
-
-            with redirect_stdout(output_capture), redirect_stderr(error_capture):
-                # Execute with timeout
-                await asyncio.wait_for(
-                    asyncio.get_event_loop().run_in_executor(None, lambda: exec(code, namespace)),
-                    timeout=self.config.execution_timeout,
-                )
-
-            output = output_capture.getvalue()
-            errors = error_capture.getvalue()
-
-            return {
-                "success": True,
-                "output": output,
-                "errors": errors if errors else None,
-                "functions_available": list(saved_functions.keys()),
-                "context": context,
-            }
-
-        except asyncio.TimeoutError:
-            return {
-                "success": False,
-                "error": f"Code execution timed out after " f"{self.config.execution_timeout} seconds",
-                "error_type": "TimeoutError",
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "traceback": traceback.format_exc(),
-            }
-
-    async def run(self):
+    def run(self, host="0.0.0.0", port=8000):
         """Run the MCP server"""
         if self.config.debug:
-            print("🚀 Starting AWS DevOps MCP Server...")
+            print(f"🚀 Starting AWS DevOps MCP Server at http://{host}:{port}")
             print(
                 f"🔧 Tools enabled: "
                 f"boto3={self.config.enable_boto3_execution}, "
                 f"pulumi={self.config.enable_pulumi}, "
                 f"functions={self.config.enable_function_storage}"
             )
+        # Use FastMCP's built-in run method with HTTP transport
+        # Force host to 0.0.0.0 to make it accessible from outside container
+        self.run_http_async(host="0.0.0.0", port=port, log_level="info" if self.config.debug else "warning")
 
-        async with stdio_server() as streams:
-            # Add empty initialization_options parameter
-            # as required by newer MCP API
-            await self.server.run(streams[0], streams[1], {})
+
+# Create the server instance at the module level for discovery by tools like fastmcp/uvicorn
+config = parse_arguments()
+server = AWSDevOpsMCPServer(config)
 
 
 async def main():
     """Main entry point"""
-    config = parse_arguments()
-    server = AWSDevOpsMCPServer(config)
-    await server.run()
+    await server.run_http_async()
 
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    main()

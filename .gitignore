@@ -1,3 +1,4 @@
 src/__pycache__/helpers.cpython-311.pyc
 
 *.pyc
+.env

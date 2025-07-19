@@ -5,26 +5,12 @@ services:
       dockerfile: Dockerfile
     container_name: aws-devops-mcp
     volumes:
-      # Mount AWS credentials (if using file-based auth)
-      - ~/.aws:/home/mcpuser/.aws:ro
-      # Mount Pulumi config
-      - ~/.pulumi:/home/mcpuser/.pulumi
-      # Persistent storage for functions database
-      - ./data:/app/data
-      # Mount source code for development
-      - ./src:/app/src
-    environment:
-      # AWS configuration
-      - AWS_DEFAULT_REGION=us-east-1
-      - AWS_PROFILE=default
-      # Pulumi configuration
-      - PULUMI_ACCESS_TOKEN=${PULUMI_ACCESS_TOKEN:-}
-      - PULUMI_CONFIG_PASSPHRASE=${PULUMI_CONFIG_PASSPHRASE:-}
-      # MCP configuration
-      - MCP_SERVER_NAME=aws-devops-mcp
-      - MCP_SERVER_VERSION=1.0.0
-    stdin_open: true
-    tty: true
+      - .:/app
+      - ~/.aws:/home/app/.aws
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
     networks:
       - mcp-network
 

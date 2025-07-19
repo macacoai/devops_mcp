@@ -3,11 +3,17 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    git \
+RUN apt-get update -y && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    gcc \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
 
 # Install Pulumi
 RUN curl -fsSL https://get.pulumi.com | sh
@@ -25,17 +31,19 @@ COPY src/ ./src/
 # Create data directory for SQLite database
 RUN mkdir -p data
 
-# Set environment variables
-ENV PYTHONPATH=/app/src
-ENV PYTHONUNBUFFERED=1
+# Create a non-root user
+RUN useradd --create-home --shell /bin/bash app && \
+    chown -R app:app /app
 
-# Create non-root user for security
-RUN groupadd -r mcpuser && useradd -r -g mcpuser mcpuser
-RUN chown -R mcpuser:mcpuser /app
-USER mcpuser
+# Switch to non-root user
+USER app
+
+# Expose port for SSE mode
+EXPOSE 8080
+
 
 # Expose port (optional, MCP typically uses stdio)
 EXPOSE 8000
 
 # Use simple server for demonstration
-CMD ["python", "src/simple_server.py"] 
+CMD ["python", "src/server.py"]
