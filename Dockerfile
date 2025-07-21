@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11
 
 # Set working directory
 WORKDIR /app
@@ -13,11 +13,6 @@ RUN apt-get update -y && \
     gcc \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-
-
-# Install Pulumi
-RUN curl -fsSL https://get.pulumi.com | sh
-ENV PATH="/root/.pulumi/bin:${PATH}"
 
 # Copy requirements first for better caching
 COPY requirements.txt .
@@ -42,8 +37,9 @@ USER app
 EXPOSE 8080
 
 
-# Expose port (optional, MCP typically uses stdio)
-EXPOSE 8000
+# Install Pulumi
+RUN curl -fsSL https://get.pulumi.com | sh
+ENV PATH="/home/app/.pulumi/bin:${PATH}"
 
 # Use simple server for demonstration
 CMD ["python", "src/server.py"]
