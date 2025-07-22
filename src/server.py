@@ -392,8 +392,15 @@ async def boto3_execute(
 
 
 if __name__ == "__main__":
-    session = get_aws_session()
-    # Test session aws with a simple command to list buckets s3
-    response = session.client("s3").list_buckets()
-    print("Session test: ", response)
+    try:
+        session = get_aws_session()
+        # Test session aws with a simple command to list buckets s3
+        response = session.client("s3").list_buckets()
+        print("Session test: ", response)
+    except Exception as e:
+        print(f"Warning: AWS credential check failed: {e}")
+        print("Server will start without default AWS credentials.")
+        print("Please provide credentials through the API when making requests.")
+    
+    # Start the MCP server regardless of AWS credential status
     mcp.run(transport="sse", host="0.0.0.0", port=8080, path="/mcp")
