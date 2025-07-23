@@ -3,16 +3,21 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: aws-devops-mcp
+    container_name: multi-cloud-devops
     volumes:
       - .:/app
       - ~/.aws:/home/app/.aws
+      - ~/.azure:/home/app/.azure
     env_file:
       - .env
     ports:
       - "8080:8080"
     networks:
       - mcp-network
+    environment:
+      # Default fallback values
+      - AWS_DEFAULT_REGION=us-east-1
+      - AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:-}
 
 networks:
   mcp-network:
