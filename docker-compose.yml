@@ -18,6 +18,7 @@ services:
       # Default fallback values
       - AWS_DEFAULT_REGION=us-east-1
       - AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:-}
+      - HCLOUD_API_TOKEN=${HCLOUD_API_TOKEN:-}
 
 networks:
   mcp-network:

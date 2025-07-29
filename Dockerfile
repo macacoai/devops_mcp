@@ -37,9 +37,5 @@ USER app
 EXPOSE 8080
 
 
-# Install Pulumi
-RUN curl -fsSL https://get.pulumi.com | sh
-ENV PATH="/home/app/.pulumi/bin:${PATH}"
-
 # Use simple server for demonstration
 CMD ["python", "src/server.py"]
