@@ -19,6 +19,7 @@ from starlette.responses import JSONResponse
 from providers.aws import get_aws_session, boto3_execute
 from providers.azure import get_azure_credential, get_azure_clients, azure_execute
 from providers.hetzner import get_hetzner_client, hetzner_execute
+from providers.ssh import get_ssh_client, ssh_execute
 from azure.mgmt.resource import ResourceManagementClient
 
 mcp = FastMCP("Multi-Cloud DevOps 🚀")
@@ -35,12 +36,13 @@ def health_status() -> str:
         "uptime": "running",
         "tools_available": [
             "boto3_execute",
-            "azure_execute",
+            "azure_execute", 
             "hetzner_execute",
-            "add", "subtract", "multiply", "divide"
+            "ssh_execute_wrapper"
         ],
         "resources_available": ["health://status", "server://info"],
         "supported_clouds": ["AWS", "Azure", "Hetzner Cloud"],
+        "supported_protocols": ["SSH"],
     }
     return str(health_data)
 
@@ -51,6 +53,7 @@ async def health_check(request: Request) -> JSONResponse:
     return JSONResponse({
         "status": "alive",
         "clouds": ["AWS", "Azure", "Hetzner Cloud"],
+        "protocols": ["SSH"],
         "version": "2.0.0"
     }, status_code=200)
 
@@ -202,6 +205,111 @@ async def hetzner_execute_wrapper(
     )
 
 
+@mcp.tool
+async def ssh_execute_wrapper(
+        hostname: str,
+        command: str,
+        username: str = "root",
+        password: str = None,
+        private_key: str = None,
+        private_key_path: str = None,
+        port: int = 22,
+        timeout: int = 30,
+        use_ssh_agent: bool = True,
+) -> Dict[str, Any]:
+    """Execute commands on remote servers via SSH with temporal credentials
+    
+    This tool allows executing shell commands on remote servers through SSH connections.
+    All credentials are temporal and must be provided with each request - no credentials
+    are stored or cached for security reasons.
+    
+    The tool supports multiple authentication methods:
+    - Username/password authentication
+    - Private key authentication (from content string or file path) 
+    - SSH agent integration for existing keys
+    
+    Security features:
+    - Temporal credentials only (no persistence)
+    - Connection timeout protection
+    - Automatic connection cleanup
+    - Basic command sanitization
+    - Support for all major private key formats (RSA, Ed25519, ECDSA, DSS)
+    
+    This is particularly useful for:
+    - Managing Hetzner Cloud servers after creation
+    - Administering any SSH-accessible Linux servers
+    - Running maintenance commands on remote systems
+    - Deploying applications and configurations
+    - Monitoring and troubleshooting remote servers
+    
+    Important security notes:
+    - Always provide credentials for each request
+    - Use private keys instead of passwords when possible
+    - Limit command execution scope for security
+    - Consider using SSH agent for key management
+    
+    Example usage:
+        # Execute command with password authentication
+        result = await ssh_execute_wrapper(
+            hostname="192.168.1.100",
+            command="df -h",
+            username="admin", 
+            password="secure_password"
+        )
+        
+        # Execute command with private key
+        result = await ssh_execute_wrapper(
+            hostname="server.example.com",
+            command="systemctl status nginx",
+            username="deploy",
+            private_key_path="/path/to/private/key"
+        )
+        
+        # Execute command on Hetzner server
+        result = await ssh_execute_wrapper(
+            hostname="hetzner-server.example.com",
+            command="apt update && apt upgrade -y",
+            username="root",
+            password="server_password",
+            timeout=60
+        )
+    
+    Args:
+        hostname (str): The hostname or IP address of the remote server
+        command (str): The shell command to execute on the remote server
+        username (str, optional): SSH username (default: root)
+        password (str, optional): SSH password for password authentication
+        private_key (str, optional): Private key content as string
+        private_key_path (str, optional): Path to private key file
+        port (int, optional): SSH port number (default: 22)
+        timeout (int, optional): Command execution timeout in seconds (default: 30)
+        use_ssh_agent (bool, optional): Use SSH agent for key authentication (default: True)
+        
+    Returns:
+        Dict[str, Any]: Response containing:
+            - success (bool): Whether execution succeeded
+            - output (str): Command stdout if successful
+            - error_output (str): Command stderr if any
+            - exit_code (int): Command exit code
+            - error (str): Error message if failed
+            - error_type (str): Type of error if failed
+            - execution_time (float): Command execution time in seconds
+            - hostname (str): The target hostname
+            - command (str): The executed command (for reference)
+    """
+    return await ssh_execute(
+        hostname=hostname,
+        command=command,
+        username=username,
+        password=password,
+        private_key=private_key,
+        private_key_path=private_key_path,
+        port=port,
+        timeout=timeout,
+        use_ssh_agent=use_ssh_agent,
+    )
+
+
 if __name__ == "__main__":
     print("🚀 Starting Multi-Cloud DevOps MCP Server...")
 
@@ -235,7 +343,8 @@ if __name__ == "__main__":
         print("ℹ️  Hetzner Cloud features will be available when credentials are provided via API")
 
     print("🌐 Supporting cloud providers: AWS, Azure, Hetzner Cloud")
-    print("🔧 Available tools: boto3_execute_wrapper, azure_execute_wrapper, hetzner_execute_wrapper")
+    print("🔐 Supporting protocols: SSH")
+    print("🔧 Available tools: boto3_execute_wrapper, azure_execute_wrapper, hetzner_execute_wrapper, ssh_execute_wrapper")
 
     # Start the MCP server
     mcp.run(transport="sse", host="0.0.0.0", port=8080, path="/mcp")

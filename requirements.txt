@@ -16,5 +16,8 @@ azure-mgmt-monitor==6.0.2
 # Hetzner Cloud SDK
 hcloud>=1.33.0
 
+# SSH client library
+paramiko>=3.5.0
+
 # Code formatting and utilities
 black==25.1.0
