@@ -18,6 +18,7 @@ from starlette.responses import JSONResponse
 # Import cloud providers
 from providers.aws import get_aws_session, boto3_execute
 from providers.azure import get_azure_credential, get_azure_clients, azure_execute
+from providers.hetzner import get_hetzner_client, hetzner_execute
 from azure.mgmt.resource import ResourceManagementClient
 
 mcp = FastMCP("Multi-Cloud DevOps 🚀")
@@ -35,10 +36,11 @@ def health_status() -> str:
         "tools_available": [
             "boto3_execute",
             "azure_execute",
+            "hetzner_execute",
             "add", "subtract", "multiply", "divide"
         ],
         "resources_available": ["health://status", "server://info"],
-        "supported_clouds": ["AWS", "Azure"],
+        "supported_clouds": ["AWS", "Azure", "Hetzner Cloud"],
     }
     return str(health_data)
 
@@ -48,7 +50,7 @@ async def health_check(request: Request) -> JSONResponse:
     """Basic health check that the server is running."""
     return JSONResponse({
         "status": "alive",
-        "clouds": ["AWS", "Azure"],
+        "clouds": ["AWS", "Azure", "Hetzner Cloud"],
         "version": "2.0.0"
     }, status_code=200)
 
@@ -162,6 +164,44 @@ async def azure_execute_wrapper(
     )
 
 
+@mcp.tool
+async def hetzner_execute_wrapper(
+        code: str,
+        hcloud_api_token: str = None,
+) -> Dict[str, Any]:
+    """Execute Hetzner Cloud hcloud code with a 30 second timeout
+
+    This tool allows executing arbitrary hcloud code to interact with Hetzner Cloud services.
+    The code execution is sandboxed and has access to the hcloud library, json,
+    and datetime. A pre-configured Hetzner Cloud client is provided via the 'client' variable.
+
+    Available services through the client:
+    - client.servers: Server management (create, list, delete, power operations)
+    - client.images: Image management (list, create from server)
+    - client.server_types: Server type information (list available sizes)
+    - client.datacenters: Datacenter information (list locations)
+    - client.ssh_keys: SSH key management (create, list, delete)
+    - client.volumes: Volume management (create, attach, detach)
+    - client.networks: Network management (create private networks)
+    - client.load_balancers: Load balancer management (create, configure)
+    - client.firewalls: Firewall management (create rules, assign to resources)
+    - client.floating_ips: Floating IP management (create, assign)
+    - client.certificates: SSL certificate management
+    - client.placement_groups: Placement group management
+
+    You can provide Hetzner Cloud credentials directly through parameters:
+
+    - hcloud_api_token: Hetzner Cloud API token
+
+    If credentials are not provided, they will be retrieved from environment variables.
+    """
+    return await hetzner_execute(
+        code=code,
+        hcloud_api_token=hcloud_api_token,
+        sanitize_python_code=sanitize_python_code,
+    )
+
+
 if __name__ == "__main__":
     print("🚀 Starting Multi-Cloud DevOps MCP Server...")
 
@@ -184,8 +224,18 @@ if __name__ == "__main__":
         print(f"⚠️  Azure credential check failed: {e}")
         print("ℹ️  Azure features will be available when credentials are provided via API")
 
-    print("🌐 Supporting cloud providers: AWS, Azure")
-    print("🔧 Available tools: boto3_execute_wrapper, azure_execute_wrapper")
+    # Test Hetzner Cloud credentials
+    try:
+        client = get_hetzner_client()
+        # Test client by getting server types (a simple, low-cost API call)
+        server_types = client.server_types.get_all()
+        print("✅ Hetzner Cloud credentials validated successfully")
+    except Exception as e:
+        print(f"⚠️  Hetzner Cloud credential check failed: {e}")
+        print("ℹ️  Hetzner Cloud features will be available when credentials are provided via API")
+
+    print("🌐 Supporting cloud providers: AWS, Azure, Hetzner Cloud")
+    print("🔧 Available tools: boto3_execute_wrapper, azure_execute_wrapper, hetzner_execute_wrapper")
 
     # Start the MCP server
     mcp.run(transport="sse", host="0.0.0.0", port=8080, path="/mcp")
