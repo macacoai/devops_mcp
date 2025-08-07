@@ -15,7 +15,7 @@ from azure.mgmt.network import NetworkManagementClient
 from azure.mgmt.resource import ResourceManagementClient
 from azure.mgmt.storage import StorageManagementClient
 
-from server import sanitize_python_code
+from src.utils import sanitize_python_code
 
 
 def get_azure_credential():

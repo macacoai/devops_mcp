@@ -1,5 +1,4 @@
 # server.py
-import ast
 from datetime import datetime
 from typing import Any, Dict
 
@@ -41,32 +40,6 @@ async def health_check(request: Request) -> JSONResponse:
         {"status": "alive", "clouds": ["AWS", "Azure", "Hetzner Cloud"], "protocols": ["SSH"], "version": "2.0.0"},
         status_code=200,
     )
-
-
-def sanitize_python_code(code_string: str) -> str:
-    try:
-        # Normalize line endings
-        replacements = {"\\n": "\n", "\\t": "\t", "\\r": "\r", '\\"': '"', "\\'": "'", "\\\\": "\\"}
-
-        for literal, actual in replacements.items():
-            code_string = code_string.replace(literal, actual)
-
-        parsed_ast = ast.parse(code_string)
-
-        # Iterate through the nodes and check for potentially unsafe constructs
-        for node in ast.walk(parsed_ast):
-            # Example: Disallow function calls to specific potentially dangerous functions
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                if node.func.id in ["eval", "exec", "open", "subprocess.call"]:
-                    raise ValueError(f"Calling '{node.func.id}' is not allowed.")
-
-        # If no unsafe constructs are found, the code is considered sanitized
-        return code_string
-
-    except SyntaxError as e:
-        raise ValueError(f"Invalid Python syntax: {e}")
-    except ValueError as e:
-        raise ValueError(f"Sanitization failed: {e}")
 
 
 # Register the modified tool functions with FastMCP
@@ -248,8 +221,6 @@ async def hetzner_execute_wrapper(
 
     Args:
         code (str): The hcloud code to execute
-        hcloud_api_token (str, optional): Hetzner Cloud API token
-        sanitize_python_code (callable, optional): Function to sanitize Python code
 
     Returns:
         Dict[str, Any]: Response containing:

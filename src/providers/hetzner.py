@@ -23,7 +23,7 @@ from hcloud.servers import BoundServer
 from hcloud.ssh_keys import BoundSSHKey
 from hcloud.volumes import BoundVolume
 
-from server import sanitize_python_code
+from src.utils import sanitize_python_code
 
 
 def get_hetzner_client(hcloud_api_token=None):

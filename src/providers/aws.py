@@ -9,7 +9,7 @@ from typing import Any, Dict
 
 import boto3
 
-from server import sanitize_python_code
+from src.utils import sanitize_python_code
 
 
 def get_aws_session():
