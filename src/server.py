@@ -53,7 +53,7 @@ def get_aws_session():
     if profile_name:
         print(f"Using profile: {profile_name}")
         session = boto3.Session(profile_name=profile_name)
-    elif role:
+    if role:
         print(f"Assuming role: {role}")
         sts = session.client("sts")
         response = sts.assume_role(RoleArn=role, RoleSessionName="MiSesion", DurationSeconds=3600)
@@ -160,7 +160,7 @@ async def boto3_execute(code: str) -> Dict[str, Any]:
             # Execute with timeout
             await asyncio.wait_for(
                 asyncio.get_event_loop().run_in_executor(None, lambda: exec(code, namespace)),
-                timeout=30,
+                timeout=None,
             )
 
         output = output_capture.getvalue()
