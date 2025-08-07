@@ -3,7 +3,6 @@ import ast
 from datetime import datetime
 from typing import Any, Dict
 
-import black
 from azure.mgmt.resource import ResourceManagementClient
 from fastmcp import FastMCP
 from starlette.requests import Request
@@ -52,10 +51,7 @@ def sanitize_python_code(code_string: str) -> str:
         for literal, actual in replacements.items():
             code_string = code_string.replace(literal, actual)
 
-        # Format with black
-        formatted = black.format_str(code_string, mode=black.FileMode())
-
-        parsed_ast = ast.parse(formatted)
+        parsed_ast = ast.parse(code_string)
 
         # Iterate through the nodes and check for potentially unsafe constructs
         for node in ast.walk(parsed_ast):
@@ -129,17 +125,12 @@ async def boto3_execute_wrapper(
     """
     return await boto3_execute(
         code=code,
-        sanitize_python_code=sanitize_python_code,
     )
 
 
 @mcp.tool
 async def azure_execute_wrapper(
     code: str,
-    azure_client_id: str = None,
-    azure_client_secret: str = None,
-    azure_tenant_id: str = None,
-    azure_subscription_id: str = None,
 ) -> Dict[str, Any]:
     """Execute Azure SDK code with a 30 second timeout
 
@@ -156,27 +147,58 @@ async def azure_execute_wrapper(
     - credential: The Azure credential object used for authentication
     - subscription_id: The Azure subscription ID being used
 
-    You can provide Azure credentials directly through parameters:
 
-    - azure_client_id: Azure client ID (service principal)
-    - azure_client_secret: Azure client secret (service principal)
-    - azure_tenant_id: Azure tenant ID
-    - azure_subscription_id: Azure subscription ID
+    DefaultAzureCredential will be used, which supports:
+    - Environment variables (AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID)
+    - Azure CLI authentication (az login)
+    - Managed Identity (when running on Azure)
+    - Azure PowerShell
+    - Interactive browser authentication (if enabled)
+
+    Important:
+        Break down complex tasks into smaller, manageable functions.
+        Avoid writing large monolithic code blocks.
+        Use appropriate Azure SDK patterns for resource management.
+        Handle Azure-specific pagination and async operations properly.
+
+    Note:
+        The code execution is asynchronous, and it has a 30 second timeout.
+        Azure SDK operations can be time-consuming, so structure your code efficiently.
+
+    Example usage:
+        # List all resource groups
+        rg_list = resource_client.resource_groups.list()
+        for rg in rg_list:
+            print(f"Resource Group: {rg.name} in {rg.location}")
+
+        # List VMs in a specific resource group
+        vm_list = compute_client.virtual_machines.list("my-resource-group")
+        for vm in vm_list:
+            print(f"VM: {vm.name}, Status: {vm.provisioning_state}")
+
+    Args:
+        code (str): The Azure SDK code to execute
+
+    Returns:
+        Dict[str, Any]: Response containing:
+            - success (bool): Whether execution succeeded
+            - output (str): Captured stdout if successful
+            - errors (str): Captured stderr if any
+            - error (str): Error message if failed
+            - error_type (str): Type of error if failed
+            - traceback (str): Full traceback if failed
+
+    Raises:
+        TimeoutError: If code execution exceeds 30 seconds
     """
     return await azure_execute(
         code=code,
-        azure_client_id=azure_client_id,
-        azure_client_secret=azure_client_secret,
-        azure_tenant_id=azure_tenant_id,
-        azure_subscription_id=azure_subscription_id,
-        sanitize_python_code=sanitize_python_code,
     )
 
 
 @mcp.tool
 async def hetzner_execute_wrapper(
     code: str,
-    hcloud_api_token: str = None,
 ) -> Dict[str, Any]:
     """Execute Hetzner Cloud hcloud code with a 30 second timeout
 
@@ -198,16 +220,51 @@ async def hetzner_execute_wrapper(
     - client.certificates: SSL certificate management
     - client.placement_groups: Placement group management
 
-    You can provide Hetzner Cloud credentials directly through parameters:
+    Important:
+        Break down complex tasks into smaller, manageable functions.
+        Avoid writing large monolithic code blocks.
+        Fetch only the required data and resources needed for each operation.
+        Use modular design patterns for better maintainability and testing.
+        Example: Instead of fetching all servers at once, filter by specific criteria
+        or process them in batches.
 
-    - hcloud_api_token: Hetzner Cloud API token
+    Note:
+        The code execution is asynchronous, and it has a 30 second timeout.
+        You have imported hcloud, json, and datetime.
 
-    If credentials are not provided, they will be retrieved from environment variables.
+    Example usage:
+        # List all servers
+        servers = client.servers.get_all()
+        for server in servers:
+            print(f"Server: {server.name}, Status: {server.status}, IP: {server.public_net.ipv4.ip}")
+
+        # Create a new server
+        response = client.servers.create(
+            name="my-server",
+            server_type=client.server_types.get_by_name("cx22"),
+            image=client.images.get_by_name("ubuntu-22.04")
+        )
+        print(f"Server created: {response.server.name}")
+
+    Args:
+        code (str): The hcloud code to execute
+        hcloud_api_token (str, optional): Hetzner Cloud API token
+        sanitize_python_code (callable, optional): Function to sanitize Python code
+
+    Returns:
+        Dict[str, Any]: Response containing:
+            - success (bool): Whether execution succeeded
+            - output (str): Captured stdout if successful
+            - errors (str): Captured stderr if any
+            - error (str): Error message if failed
+            - error_type (str): Type of error if failed
+            - traceback (str): Full traceback if failed
+
+    Raises:
+        TimeoutError: If code execution exceeds 30 seconds
     """
     return await hetzner_execute(
         code=code,
-        hcloud_api_token=hcloud_api_token,
-        sanitize_python_code=sanitize_python_code,
     )
 
 

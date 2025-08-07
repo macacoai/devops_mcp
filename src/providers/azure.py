@@ -14,6 +14,7 @@ from azure.mgmt.monitor import MonitorManagementClient
 from azure.mgmt.network import NetworkManagementClient
 from azure.mgmt.resource import ResourceManagementClient
 from azure.mgmt.storage import StorageManagementClient
+
 from server import sanitize_python_code
 
 
@@ -55,9 +56,7 @@ def get_azure_credential():
         credential = DefaultAzureCredential()
 
     if not subscription_id:
-        raise ValueError(
-            "Azure subscription ID is required. Set AZURE_SUBSCRIPTION_ID environment variable or provide subscription_id parameter."
-        )
+        raise ValueError("Azure subscription ID is required. Set AZURE_SUBSCRIPTION_ID environment variable.")
 
     return credential, subscription_id
 
@@ -85,65 +84,6 @@ def get_azure_clients(credential, subscription_id):
 async def azure_execute(
     code: str,
 ) -> Dict[str, Any]:
-    """Execute Azure SDK code with a 30 second timeout
-
-    This tool allows executing arbitrary Azure SDK code to interact with Azure services.
-    The code execution is sandboxed and has access to Azure management client libraries,
-    json, and datetime modules. Pre-configured Azure clients are provided for common services.
-
-    Available Azure clients in the execution namespace:
-    - compute_client: Azure Compute Management Client (VMs, scale sets, etc.)
-    - storage_client: Azure Storage Management Client (storage accounts, blobs, etc.)
-    - resource_client: Azure Resource Management Client (resource groups, deployments)
-    - network_client: Azure Network Management Client (VNets, NSGs, etc.)
-    - monitor_client: Azure Monitor Management Client (metrics, alerts, etc.)
-    - credential: The Azure credential object used for authentication
-    - subscription_id: The Azure subscription ID being used
-
-
-    DefaultAzureCredential will be used, which supports:
-    - Environment variables (AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID)
-    - Azure CLI authentication (az login)
-    - Managed Identity (when running on Azure)
-    - Azure PowerShell
-    - Interactive browser authentication (if enabled)
-
-    Important:
-        Break down complex tasks into smaller, manageable functions.
-        Avoid writing large monolithic code blocks.
-        Use appropriate Azure SDK patterns for resource management.
-        Handle Azure-specific pagination and async operations properly.
-
-    Note:
-        The code execution is asynchronous, and it has a 30 second timeout.
-        Azure SDK operations can be time-consuming, so structure your code efficiently.
-
-    Example usage:
-        # List all resource groups
-        rg_list = resource_client.resource_groups.list()
-        for rg in rg_list:
-            print(f"Resource Group: {rg.name} in {rg.location}")
-
-        # List VMs in a specific resource group
-        vm_list = compute_client.virtual_machines.list("my-resource-group")
-        for vm in vm_list:
-            print(f"VM: {vm.name}, Status: {vm.provisioning_state}")
-
-    Args:
-        code (str): The Azure SDK code to execute
-
-    Returns:
-        Dict[str, Any]: Response containing:
-            - success (bool): Whether execution succeeded
-            - output (str): Captured stdout if successful
-            - errors (str): Captured stderr if any
-            - error (str): Error message if failed
-            - error_type (str): Type of error if failed
-            - traceback (str): Full traceback if failed
-
-    Raises:
-        TimeoutError: If code execution exceeds 30 seconds
-    """
     try:
         # Get Azure credential and subscription ID
         credential, subscription_id = get_azure_credential()

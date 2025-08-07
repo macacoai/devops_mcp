@@ -23,6 +23,8 @@ from hcloud.servers import BoundServer
 from hcloud.ssh_keys import BoundSSHKey
 from hcloud.volumes import BoundVolume
 
+from server import sanitize_python_code
+
 
 def get_hetzner_client(hcloud_api_token=None):
     """
@@ -40,9 +42,7 @@ def get_hetzner_client(hcloud_api_token=None):
     api_token = hcloud_api_token or os.getenv("HCLOUD_API_TOKEN")
 
     if not api_token:
-        raise ValueError(
-            "Hetzner Cloud API token is required. Set HCLOUD_API_TOKEN environment variable or provide hcloud_api_token parameter."
-        )
+        raise ValueError("Hetzner Cloud API token is required. Set HCLOUD_API_TOKEN environment variable.")
 
     # Log the credential source we're using
     if hcloud_api_token:
@@ -54,82 +54,11 @@ def get_hetzner_client(hcloud_api_token=None):
 
 
 async def hetzner_execute(
-        code: str,
-        hcloud_api_token: str = None,
-        sanitize_python_code=None,
+    code: str,
 ) -> Dict[str, Any]:
-    """Execute Hetzner Cloud hcloud code with a 30 second timeout
-
-    This tool allows executing arbitrary hcloud code to interact with Hetzner Cloud services.
-    The code execution is sandboxed and has access to the hcloud library, json,
-    and datetime. A pre-configured Hetzner Cloud client is provided via the 'client' variable.
-
-    You can provide Hetzner Cloud credentials directly through parameters:
-
-    - hcloud_api_token: Hetzner Cloud API token
-
-    If credentials are not provided, they will be retrieved from environment variables.
-
-    Available services through the client:
-    - client.servers: Server management (create, list, delete, power operations)
-    - client.images: Image management (list, create from server)
-    - client.server_types: Server type information (list available sizes)
-    - client.datacenters: Datacenter information (list locations)
-    - client.ssh_keys: SSH key management (create, list, delete)
-    - client.volumes: Volume management (create, attach, detach)
-    - client.networks: Network management (create private networks)
-    - client.load_balancers: Load balancer management (create, configure)
-    - client.firewalls: Firewall management (create rules, assign to resources)
-    - client.floating_ips: Floating IP management (create, assign)
-    - client.certificates: SSL certificate management
-    - client.placement_groups: Placement group management
-
-    Important:
-        Break down complex tasks into smaller, manageable functions.
-        Avoid writing large monolithic code blocks.
-        Fetch only the required data and resources needed for each operation.
-        Use modular design patterns for better maintainability and testing.
-        Example: Instead of fetching all servers at once, filter by specific criteria
-        or process them in batches.
-
-    Note:
-        The code execution is asynchronous, and it has a 30 second timeout.
-        You have imported hcloud, json, and datetime.
-
-    Example usage:
-        # List all servers
-        servers = client.servers.get_all()
-        for server in servers:
-            print(f"Server: {server.name}, Status: {server.status}, IP: {server.public_net.ipv4.ip}")
-
-        # Create a new server
-        response = client.servers.create(
-            name="my-server",
-            server_type=client.server_types.get_by_name("cx22"),
-            image=client.images.get_by_name("ubuntu-22.04")
-        )
-        print(f"Server created: {response.server.name}")
-
-    Args:
-        code (str): The hcloud code to execute
-        hcloud_api_token (str, optional): Hetzner Cloud API token
-        sanitize_python_code (callable, optional): Function to sanitize Python code
-
-    Returns:
-        Dict[str, Any]: Response containing:
-            - success (bool): Whether execution succeeded
-            - output (str): Captured stdout if successful
-            - errors (str): Captured stderr if any
-            - error (str): Error message if failed
-            - error_type (str): Type of error if failed
-            - traceback (str): Full traceback if failed
-
-    Raises:
-        TimeoutError: If code execution exceeds 30 seconds
-    """
     try:
         # Get Hetzner Cloud client
-        client = get_hetzner_client(hcloud_api_token=hcloud_api_token)
+        client = get_hetzner_client(hcloud_api_token=os.getenv("HCLOUD_API_TOKEN"))
 
         # Build execution namespace
         namespace = {
@@ -157,8 +86,7 @@ async def hetzner_execute(
         # Use asyncio.wait_for for timeout
         output_capture = StringIO()
         error_capture = StringIO()
-        if sanitize_python_code:
-            code = sanitize_python_code(code)
+        code = sanitize_python_code(code)
         print(f"Executing Hetzner Cloud code: {code[:100]}...")
 
         with redirect_stdout(output_capture), redirect_stderr(error_capture):

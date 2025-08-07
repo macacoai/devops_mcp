@@ -1,0 +1,34 @@
+default_stages: [pre-commit]
+
+repos:
+  - repo: local
+    hooks:
+      - id: black
+        name: black
+        entry: black
+        args: [--line-length=120]
+        language: python
+        types: [python]
+      - id: isort
+        name: isort
+        entry: isort
+        language: system
+        types: [python]
+      - id: pylint
+        name: pylint
+        entry: pylint
+        args: ["--rcfile=.pylintrc", --errors-only]
+        language: system
+        types: [python]
+      - id: flake8
+        name: flake8
+        entry: flake8
+        args: ["--config=setup.cfg"]
+        language: system
+        types: [python]
+      - id: trufflehog
+        name: TruffleHog
+        description: Detect secrets in your data.
+        entry: bash -c 'trufflehog git file://. --since-commit HEAD --only-verified --fail --exclude-paths=.trufflehogignore --no-update'
+        # For running trufflehog in docker, use the following entry:
+        language: system
