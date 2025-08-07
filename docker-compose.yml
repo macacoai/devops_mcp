@@ -3,10 +3,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: aws-devops-mcp
+    container_name: multi-cloud-devops
     volumes:
       - .:/app
       - ~/.aws:/home/app/.aws
+      - ~/.azure:/home/app/.azure
     env_file:
       - .env
     ports:

@@ -4,3 +4,7 @@ src/__pycache__/helpers.cpython-311.pyc
 .env
 pulumi-state/*
 pulumi_project/*
+.claude
+.idea
+CLAUDE.md
+app-codebase.xml

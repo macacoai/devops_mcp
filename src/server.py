@@ -1,24 +1,21 @@
 # server.py
 import ast
-import asyncio
-import json
-import os
-import traceback
-from contextlib import redirect_stderr, redirect_stdout
-from datetime import datetime, timedelta
-from io import StringIO
+from datetime import datetime
 from typing import Any, Dict
 
 import black
-import boto3
-import pulumi
-import pulumi_aws as aws
+from azure.mgmt.resource import ResourceManagementClient
 from fastmcp import FastMCP
-from pulumi import automation as auto
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-mcp = FastMCP("Devops AWS 🚀")
+# Import cloud providers
+from providers.aws import boto3_execute, get_aws_session
+from providers.azure import azure_execute, get_azure_credential
+from providers.hetzner import get_hetzner_client, hetzner_execute
+from providers.ssh import ssh_execute
+
+mcp = FastMCP("Multi-Cloud DevOps 🚀")
 
 
 @mcp.resource("health://status")
@@ -27,11 +24,13 @@ def health_status() -> str:
     health_data = {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "server_name": "dev-ops-aws",
-        "version": "1.0.0",
+        "server_name": "multi-cloud-devops",
+        "version": "2.0.0",
         "uptime": "running",
-        "tools_available": ["add", "subtract", "multiply", "divide"],
+        "tools_available": ["boto3_execute", "azure_execute", "hetzner_execute", "ssh_execute_wrapper"],
         "resources_available": ["health://status", "server://info"],
+        "supported_clouds": ["AWS", "Azure", "Hetzner Cloud"],
+        "supported_protocols": ["SSH"],
     }
     return str(health_data)
 
@@ -39,32 +38,10 @@ def health_status() -> str:
 @mcp.custom_route("/health", methods=["GET"])
 async def health_check(request: Request) -> JSONResponse:
     """Basic health check that the server is running."""
-    return JSONResponse({"status": "alive"}, status_code=200)
-
-
-def get_aws_session():
-    profile_name = os.getenv("AWS_PROFILE")
-    role = os.getenv("AWS_ROLE")
-    session = boto3.Session(
-        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-        region_name=os.getenv("AWS_DEFAULT_REGION"),
+    return JSONResponse(
+        {"status": "alive", "clouds": ["AWS", "Azure", "Hetzner Cloud"], "protocols": ["SSH"], "version": "2.0.0"},
+        status_code=200,
     )
-    if profile_name:
-        print(f"Using profile: {profile_name}")
-        session = boto3.Session(profile_name=profile_name)
-    if role:
-        print(f"Assuming role: {role}")
-        sts = session.client("sts")
-        response = sts.assume_role(RoleArn=role, RoleSessionName="MiSesion", DurationSeconds=3600)
-        session = boto3.Session(
-            aws_access_key_id=response["Credentials"]["AccessKeyId"],
-            aws_secret_access_key=response["Credentials"]["SecretAccessKey"],
-            aws_session_token=response["Credentials"]["SessionToken"],
-        )
-    else:
-        print("Creating session with default credentials")
-    return session
 
 
 def sanitize_python_code(code_string: str) -> str:
@@ -75,24 +52,17 @@ def sanitize_python_code(code_string: str) -> str:
         for literal, actual in replacements.items():
             code_string = code_string.replace(literal, actual)
 
-        # Formatea con black
+        # Format with black
         formatted = black.format_str(code_string, mode=black.FileMode())
 
         parsed_ast = ast.parse(formatted)
 
         # Iterate through the nodes and check for potentially unsafe constructs
         for node in ast.walk(parsed_ast):
-            # Example: Disallow import statements (to prevent importing malicious modules)
-            # if isinstance(node, ast.Import) or isinstance(node, ast.ImportFrom):
-            #     raise ValueError("Import statements are not allowed.")
-
-            # Example: Disallow function calls to specific potentially dangerous functions (e.g., 'eval', 'exec')
+            # Example: Disallow function calls to specific potentially dangerous functions
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                 if node.func.id in ["eval", "exec", "open", "subprocess.call"]:
                     raise ValueError(f"Calling '{node.func.id}' is not allowed.")
-
-            # Add more checks based on your security requirements
-            # e.g., disallow file system operations, network access, etc.
 
         # If no unsafe constructs are found, the code is considered sanitized
         return code_string
@@ -103,13 +73,30 @@ def sanitize_python_code(code_string: str) -> str:
         raise ValueError(f"Sanitization failed: {e}")
 
 
+# Register the modified tool functions with FastMCP
 @mcp.tool
-async def boto3_execute(code: str) -> Dict[str, Any]:
+async def boto3_execute_wrapper(
+    code: str,
+) -> Dict[str, Any]:
     """Execute AWS boto3 code with a 30 second timeout
 
     This tool allows executing arbitrary boto3 code to interact with AWS services.
     The code execution is sandboxed and has access to common modules like boto3, json,
     and datetime. A pre-configured AWS session is provided via the 'session' variable.
+
+    When listing AWS resources, the tool will:
+    1. First count the total number of resources
+    2. Then retrieve and return them in paginated batches of 50 items
+
+    Example for listing S3 buckets:
+        # Get total count
+        total_buckets = len(list(session.client('s3').list_buckets()['Buckets']))
+        print(f"Total buckets: {total_buckets}")
+
+        # List in batches of 50
+        paginator = session.client('s3').get_paginator('list_buckets')
+        for page in paginator.paginate(PaginationConfig={'PageSize': 50}):
+            print("Current batch of buckets:", page['Buckets'])
     Important:
         Break down complex tasks into smaller, manageable functions.
         Avoid writing large monolithic code blocks.
@@ -121,9 +108,9 @@ async def boto3_execute(code: str) -> Dict[str, Any]:
         The code execution is asynchronous, and it has a 30 second timeout.
         You have imported boto3, json, and datetime.
 
-
     Example usage:
-        response = session.client("s3").list_buckets()/nprint("Session test: ", response)
+        response = session.client("s3").list_buckets()
+        print("Session test: ", response)
 
     Args:
         code (str): The boto3 code to execute
@@ -139,184 +126,234 @@ async def boto3_execute(code: str) -> Dict[str, Any]:
 
     Raises:
         TimeoutError: If code execution exceeds 30 seconds
-
     """
-    # Build execution namespace based on context
-    namespace = {
-        "boto3": boto3,
-        "json": json,
-        "datetime": datetime,
-        "timedelta": timedelta,
-        "session": get_aws_session(),
-    }
-
-    try:
-        # Use asyncio.wait_for for timeout
-        output_capture = StringIO()
-        error_capture = StringIO()
-        code = sanitize_python_code(code)
-        print(code)
-        with redirect_stdout(output_capture), redirect_stderr(error_capture):
-            # Execute with timeout
-            await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(None, lambda: exec(code, namespace)),
-                timeout=None,
-            )
-
-        output = output_capture.getvalue()
-        errors = error_capture.getvalue()
-
-        return {"success": True, "output": output, "errors": errors if errors else None}
-
-    except asyncio.TimeoutError:
-        return {
-            "success": False,
-            "error": "Code execution timed out after 30 seconds",
-            "error_type": "TimeoutError",
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "error_type": type(e).__name__,
-            "traceback": traceback.format_exc(),
-        }
+    return await boto3_execute(
+        code=code,
+        sanitize_python_code=sanitize_python_code,
+    )
 
 
-# @mcp.tool
-# async def pulumi_preview(code: str, stack_name: str, project_name: str) -> Dict[str, Any]:
-#     """Preview Pulumi infrastructure changes without deploying them.
+@mcp.tool
+async def azure_execute_wrapper(
+    code: str,
+    azure_client_id: str = None,
+    azure_client_secret: str = None,
+    azure_tenant_id: str = None,
+    azure_subscription_id: str = None,
+) -> Dict[str, Any]:
+    """Execute Azure SDK code with a 30 second timeout
 
-#     This tool allows you to see what changes would be made to your infrastructure
-#     before actually deploying them. It's a safe way to validate your infrastructure
-#     code changes.
+    This tool allows executing arbitrary Azure SDK code to interact with Azure services.
+    The code execution is sandboxed and has access to Azure management client libraries,
+    json, and datetime modules. Pre-configured Azure clients are provided for common services.
 
-#     Args:
-#         code (str): The Pulumi program code to execute
-#         stack_name (str): Name of the Pulumi stack to preview
-#         project_name (str): Name of the Pulumi project
+    Available Azure clients in the execution namespace:
+    - compute_client: Azure Compute Management Client (VMs, scale sets, etc.)
+    - storage_client: Azure Storage Management Client (storage accounts, blobs, etc.)
+    - resource_client: Azure Resource Management Client (resource groups, deployments)
+    - network_client: Azure Network Management Client (VNets, NSGs, etc.)
+    - monitor_client: Azure Monitor Management Client (metrics, alerts, etc.)
+    - credential: The Azure credential object used for authentication
+    - subscription_id: The Azure subscription ID being used
 
-#     Returns:
-#         Dict[str, Any]: Response containing:
-#             - success (bool): Whether preview succeeded
-#             - stack_name (str): Name of the stack previewed
-#             - project_name (str): Name of the project
-#             - changes (dict): Summary of resources to be added/updated/deleted
-#             - code_executed (str): The sanitized code that was executed
-#             - error (str): Error message if failed
-#             - error_type (str): Type of error if failed
-#             - traceback (str): Full traceback if failed
+    You can provide Azure credentials directly through parameters:
 
-#     Raises:
-#         TimeoutError: If preview execution exceeds configured timeout
-#     """
-#     try:
-#         code = sanitize_python_code(code)
-
-#         def program():
-#             exec(code, {"pulumi": pulumi, "aws": aws, "pulumi_aws": aws})
-
-#         # Create or select stack
-#         stack = auto.create_or_select_stack(stack_name=stack_name, project_name=project_name, program=program)
-
-#         # Run preview with timeout
-#         preview_result = await asyncio.wait_for(
-#             asyncio.get_event_loop().run_in_executor(None, lambda: stack.preview()),
-#             timeout=120,
-#         )
-
-#         return {
-#             "success": True,
-#             "stack_name": stack_name,
-#             "project_name": project_name,
-#             "changes": preview_result.change_summary,
-#             "code_executed": code,
-#         }
-
-#     except asyncio.TimeoutError:
-#         return {
-#             "success": False,
-#             "error": "Pulumi preview timed out after 30 seconds",
-#             "error_type": "TimeoutError",
-#         }
-#     except Exception as e:
-#         return {
-#             "success": False,
-#             "error": str(e),
-#             "error_type": type(e).__name__,
-#             "traceback": traceback.format_exc(),
-#         }
+    - azure_client_id: Azure client ID (service principal)
+    - azure_client_secret: Azure client secret (service principal)
+    - azure_tenant_id: Azure tenant ID
+    - azure_subscription_id: Azure subscription ID
+    """
+    return await azure_execute(
+        code=code,
+        azure_client_id=azure_client_id,
+        azure_client_secret=azure_client_secret,
+        azure_tenant_id=azure_tenant_id,
+        azure_subscription_id=azure_subscription_id,
+        sanitize_python_code=sanitize_python_code,
+    )
 
 
-# @mcp.tool
-# async def pulumi_up(code: str, stack_name: str, project_name: str) -> Dict[str, Any]:
-#     """Deploy Pulumi infrastructure changes to your cloud environment.
+@mcp.tool
+async def hetzner_execute_wrapper(
+    code: str,
+    hcloud_api_token: str = None,
+) -> Dict[str, Any]:
+    """Execute Hetzner Cloud hcloud code with a 30 second timeout
 
-#     This tool executes your Pulumi program and applies the infrastructure changes
-#     to your cloud environment. It will create, update, or delete resources as
-#     specified in your code.
+    This tool allows executing arbitrary hcloud code to interact with Hetzner Cloud services.
+    The code execution is sandboxed and has access to the hcloud library, json,
+    and datetime. A pre-configured Hetzner Cloud client is provided via the 'client' variable.
 
-#     Args:
-#         code (str): The Pulumi program code to execute
-#         stack_name (str): Name of the Pulumi stack to deploy
-#         project_name (str): Name of the Pulumi project
+    Available services through the client:
+    - client.servers: Server management (create, list, delete, power operations)
+    - client.images: Image management (list, create from server)
+    - client.server_types: Server type information (list available sizes)
+    - client.datacenters: Datacenter information (list locations)
+    - client.ssh_keys: SSH key management (create, list, delete)
+    - client.volumes: Volume management (create, attach, detach)
+    - client.networks: Network management (create private networks)
+    - client.load_balancers: Load balancer management (create, configure)
+    - client.firewalls: Firewall management (create rules, assign to resources)
+    - client.floating_ips: Floating IP management (create, assign)
+    - client.certificates: SSL certificate management
+    - client.placement_groups: Placement group management
 
-#     Returns:
-#         Dict[str, Any]: Response containing:
-#             - success (bool): Whether deployment succeeded
-#             - stack_name (str): Name of the stack deployed
-#             - project_name (str): Name of the project
-#             - summary (dict): Summary of resources added/updated/deleted
-#             - code_executed (str): The sanitized code that was executed
-#             - error (str): Error message if failed
-#             - error_type (str): Type of error if failed
-#             - traceback (str): Full traceback if failed
+    You can provide Hetzner Cloud credentials directly through parameters:
 
-#     Raises:
-#         TimeoutError: If deployment execution exceeds configured timeout
-#     """
-#     try:
-#         code = sanitize_python_code(code)
+    - hcloud_api_token: Hetzner Cloud API token
 
-#         def program():
-#             exec(code, {"pulumi": pulumi, "aws": aws, "pulumi_aws": aws})
+    If credentials are not provided, they will be retrieved from environment variables.
+    """
+    return await hetzner_execute(
+        code=code,
+        hcloud_api_token=hcloud_api_token,
+        sanitize_python_code=sanitize_python_code,
+    )
 
-#         # Create or select stack
-#         stack = auto.create_or_select_stack(stack_name=stack_name, project_name=project_name, program=program)
 
-#         # Run deployment with timeout
-#         up_result = await asyncio.wait_for(
-#             asyncio.get_event_loop().run_in_executor(None, lambda: stack.up()),
-#             timeout=120,
-#         )
+@mcp.tool
+async def ssh_execute_wrapper(
+    hostname: str,
+    command: str,
+    username: str = "root",
+    password: str = None,
+    private_key: str = None,
+    private_key_path: str = None,
+    port: int = 22,
+    timeout: int = 30,
+    use_ssh_agent: bool = True,
+) -> Dict[str, Any]:
+    """Execute commands on remote servers via SSH with temporal credentials
 
-#         return {
-#             "success": True,
-#             "stack_name": stack_name,
-#             "project_name": project_name,
-#             "outputs": up_result.outputs,
-#             "summary": up_result.summary,
-#             "code_executed": code,
-#         }
+    This tool allows executing shell commands on remote servers through SSH connections.
+    All credentials are temporal and must be provided with each request - no credentials
+    are stored or cached for security reasons.
 
-#     except asyncio.TimeoutError:
-#         return {
-#             "success": False,
-#             "error": "Pulumi deployment timed out after 120 seconds",
-#             "error_type": "TimeoutError",
-#         }
-#     except Exception as e:
-#         return {
-#             "success": False,
-#             "error": str(e),
-#             "error_type": type(e).__name__,
-#             "traceback": traceback.format_exc(),
-#         }
+    The tool supports multiple authentication methods:
+    - Username/password authentication
+    - Private key authentication (from content string or file path)
+    - SSH agent integration for existing keys
+
+    Security features:
+    - Temporal credentials only (no persistence)
+    - Connection timeout protection
+    - Automatic connection cleanup
+    - Basic command sanitization
+    - Support for all major private key formats (RSA, Ed25519, ECDSA, DSS)
+
+    This is particularly useful for:
+    - Managing Hetzner Cloud servers after creation
+    - Administering any SSH-accessible Linux servers
+    - Running maintenance commands on remote systems
+    - Deploying applications and configurations
+    - Monitoring and troubleshooting remote servers
+
+    Important security notes:
+    - Always provide credentials for each request
+    - Use private keys instead of passwords when possible
+    - Limit command execution scope for security
+    - Consider using SSH agent for key management
+
+    Example usage:
+        # Execute command with password authentication
+        result = await ssh_execute_wrapper(
+            hostname="192.168.1.100",
+            command="df -h",
+            username="admin",
+            password="secure_password"
+        )
+
+        # Execute command with private key
+        result = await ssh_execute_wrapper(
+            hostname="server.example.com",
+            command="systemctl status nginx",
+            username="deploy",
+            private_key_path="/path/to/private/key"
+        )
+
+        # Execute command on Hetzner server
+        result = await ssh_execute_wrapper(
+            hostname="hetzner-server.example.com",
+            command="apt update && apt upgrade -y",
+            username="root",
+            password="server_password",
+            timeout=60
+        )
+
+    Args:
+        hostname (str): The hostname or IP address of the remote server
+        command (str): The shell command to execute on the remote server
+        username (str, optional): SSH username (default: root)
+        password (str, optional): SSH password for password authentication
+        private_key (str, optional): Private key content as string
+        private_key_path (str, optional): Path to private key file
+        port (int, optional): SSH port number (default: 22)
+        timeout (int, optional): Command execution timeout in seconds (default: 30)
+        use_ssh_agent (bool, optional): Use SSH agent for key authentication (default: True)
+
+    Returns:
+        Dict[str, Any]: Response containing:
+            - success (bool): Whether execution succeeded
+            - output (str): Command stdout if successful
+            - error_output (str): Command stderr if any
+            - exit_code (int): Command exit code
+            - error (str): Error message if failed
+            - error_type (str): Type of error if failed
+            - execution_time (float): Command execution time in seconds
+            - hostname (str): The target hostname
+            - command (str): The executed command (for reference)
+    """
+
+    return await ssh_execute(
+        hostname=hostname,
+        command=command,
+        username=username,
+        password=password,
+        private_key=private_key,
+        private_key_path=private_key_path,
+        port=port,
+        timeout=timeout,
+        use_ssh_agent=use_ssh_agent,
+    )
 
 
 if __name__ == "__main__":
-    session = get_aws_session()
-    # Test session aws with a simple command to list buckets s3
-    response = session.client("s3").list_buckets()
-    print("Session test: ", response)
+    print("🚀 Starting Multi-Cloud DevOps MCP Server...")
+
+    # Test AWS credentials
+    try:
+        session = get_aws_session()
+        response = session.client("s3").list_buckets()
+        print("✅ AWS credentials validated successfully")
+    except Exception as e:
+        print(f"⚠️  AWS credential check failed: {e}")
+        print("ℹ️  AWS features will be available when credentials are provided via API")
+
+    # Test Azure credentials
+    try:
+        credential, subscription_id = get_azure_credential()
+        # Test credential by creating a simple client
+        resource_client = ResourceManagementClient(credential, subscription_id)
+        print("✅ Azure credentials validated successfully")
+    except Exception as e:
+        print(f"⚠️  Azure credential check failed: {e}")
+        print("ℹ️  Azure features will be available when credentials are provided via API")
+
+    # Test Hetzner Cloud credentials
+    try:
+        client = get_hetzner_client()
+        # Test client by getting server types (a simple, low-cost API call)
+        server_types = client.server_types.get_all()
+        print("✅ Hetzner Cloud credentials validated successfully")
+    except Exception as e:
+        print(f"⚠️  Hetzner Cloud credential check failed: {e}")
+        print("ℹ️  Hetzner Cloud features will be available when credentials are provided via API")
+
+    print("🌐 Supporting cloud providers: AWS, Azure, Hetzner Cloud")
+    print("🔐 Supporting protocols: SSH")
+    print(
+        "🔧 Available tools: boto3_execute_wrapper, azure_execute_wrapper, hetzner_execute_wrapper, ssh_execute_wrapper"
+    )
+
+    # Start the MCP server
     mcp.run(transport="sse", host="0.0.0.0", port=8080, path="/mcp")

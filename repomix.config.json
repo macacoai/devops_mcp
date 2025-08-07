@@ -1,0 +1,31 @@
+{
+  "ignore": {
+    "customPatterns": [],
+    "useDefaultPatterns": true,
+    "useGitignore": true
+  },
+  "include": [],
+  "output": {
+    "compress": false,
+    "copyToClipboard": false,
+    "directoryStructure": true,
+    "filePath": "app-codebase.xml",
+    "fileSummary": true,
+    "git": {
+      "sortByChanges": true,
+      "sortByChangesMaxCommits": 100
+    },
+    "parsableStyle": false,
+    "removeComments": false,
+    "removeEmptyLines": false,
+    "showLineNumbers": true,
+    "style": "xml",
+    "topFilesLength": 5
+  },
+  "security": {
+    "enableSecurityCheck": true
+  },
+  "tokenCount": {
+    "encoding": "o200k_base"
+  }
+}
