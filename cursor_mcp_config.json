@@ -1,12 +1,7 @@
 {
   "mcpServers": {
-    "aws-devops-mcp": {
-      "command": "docker",
-      "args": ["exec", "aws-devops-mcp", "python", "src/mcp_server.py"],
-      "env": {
-        "AWS_DEFAULT_REGION": "us-east-1",
-        "AWS_PROFILE": "default"
-      }
+    "devops-aws": {
+      "url": "http://localhost:8080/mcp"
     }
   }
-} 
+}
