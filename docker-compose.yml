@@ -11,7 +11,7 @@ services:
     env_file:
       - .env
     ports:
-      - "8090:8080"
+      - "8080:8080"
     networks:
       - mcp-network
 
